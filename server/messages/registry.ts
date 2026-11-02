@@ -241,8 +241,18 @@ export class MessageRegistry {
     const a = this.opts.office.get(agentId);
     if (a?.provider === 'codex') return this.codexAvailable() && present(a) && a.kind === 'main';
     const at = this.seen.get(agentId);
-    if (at === undefined || this.now() - at >= this.presenceMs) return false;
+    const windowMs = a?.provider === 'antigravity' ? Math.max(this.presenceMs, 10 * 60_000) : this.presenceMs;
+    if (at === undefined || this.now() - at >= windowMs) return false;
     return present(a) && a.kind === 'main';
+  }
+
+  /** Marca a presença de uma sessão por hook (ex.: Antigravity) sem esvaziar a caixa de entrada. */
+  touchSession(session: string): void {
+    const agent = this.opts.office.list().find((a) => a.kind === 'main' && a.sessionId === session && present(a));
+    if (!agent) return;
+    const was = this.canMessage(agent.id);
+    this.seen.set(agent.id, this.now());
+    if (!was) this.opts.office.markDirty();
   }
 
   /** Há como entregar ao Codex: o binário no modo Node ou o auxiliar do host visto há pouco. */
