@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AccountInfo } from '../../../shared/types';
-import { cardState, codexUsageNote, showsUsageAge, sourceLabel, usageMessage, usageSubtitle } from './usage';
+import { antigravityUsageNote, cardState, codexUsageNote, showsUsageAge, sourceLabel, usageMessage, usageSubtitle } from './usage';
 
 const MIN = 60_000;
 type Acc = Pick<AccountInfo, 'usage' | 'usageStatus' | 'provider' | 'email' | 'plan' | 'configDir'>;
@@ -48,5 +48,23 @@ describe('cartão de uso de uma conta do Codex', () => {
     expect(usageSubtitle({ email: 'a@b.c', configDir: '~/.claude' })).toBe('a@b.c');
     expect(usageSubtitle({ configDir: '~/.claude' })).toBe('~/.claude');
     expect(codexUsageNote({ usageStatus: 'ok' }, 0)).toBe('');
+  });
+});
+
+describe('cartão de uso de uma conta do Antigravity', () => {
+  it('mostra email quando presente ou Antigravity, e número de sessões ou conectado via hooks', () => {
+    const agy = (over: Partial<AccountInfo> = {}): Pick<AccountInfo, 'usage' | 'usageStatus' | 'provider' | 'email' | 'plan' | 'configDir' | 'sessions'> => ({
+      provider: 'antigravity',
+      usageStatus: 'disabled',
+      configDir: '/Users/test/.gemini/antigravity-cli',
+      sessions: 0,
+      ...over,
+    });
+    expect(usageSubtitle(agy({ email: 'dev@example.com' }))).toBe('dev@example.com');
+    expect(usageSubtitle(agy({ email: undefined }))).toBe('Antigravity');
+    expect(usageMessage(agy({ sessions: 0 }))).toEqual(['conectado via hooks', 'conectado']);
+    expect(usageMessage(agy({ sessions: 1 }))).toEqual(['1 sessão ativa', '1 ativ.']);
+    expect(usageMessage(agy({ sessions: 3 }))).toEqual(['3 sessões ativas', '3 ativ.']);
+    expect(antigravityUsageNote(agy())).toContain('Antigravity');
   });
 });

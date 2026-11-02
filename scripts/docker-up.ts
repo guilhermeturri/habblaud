@@ -37,10 +37,10 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync,
 import { homedir } from 'node:os';
 import { dirname, join, posix, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { AccountInfo, SourceInfo } from '../shared/types';
+import type { AccountInfo, Provider, SourceInfo } from '../shared/types';
 import { codexDirsRefused, detectAccounts, discoverClaudeDirs, type DetectedAccount } from '../server/accounts/detect';
 import { detectCodexAccounts, discoverCodexDirs } from '../server/sources/codex/accounts';
-import { detectAntigravityAccounts, discoverAntigravityDirs, planAntigravityMounts } from '../server/sources/antigravity/accounts';
+import { detectAntigravityAccounts, discoverAntigravityDirs, planAntigravityMounts, type AntigravityAccountMount } from '../server/sources/antigravity/accounts';
 import { describeStateMigration, LEGACY_NAME, legacyEnvWarning, migrateLegacyStateDir } from '../server/legacy';
 import { makeClaudeRunner, MIN_CLAUDE_VERSION, readPackageVersion, updateInstalledMods, type ModUpdateResult } from './mod-install';
 import { tr } from '../shared/i18n';
@@ -167,8 +167,8 @@ type CachedUsage = { fetchedAtMs: unknown; utilization: Partial<Record<(typeof U
 
 export interface AccountPayload {
   id: string;
-  /** Só nas contas do Codex (ausente = Claude Code). */
-  provider?: 'codex';
+  /** Só nas contas de outras ferramentas (ausente = Claude Code). */
+  provider?: Provider;
   configDir: string;
   mountDir: string;
   short: string;
@@ -235,6 +235,15 @@ export function codexAccountsPayload(mounts: AccountMount[]): AccountPayload[] {
   return mounts.map(({ account: a, hostDir, mountDir }) => {
     const p: AccountPayload = { id: a.id, provider: 'codex', configDir: hostDir, mountDir, short: a.short, name: a.name, color: a.color };
     if (a.plan) p.plan = a.plan;
+    return p;
+  });
+}
+
+/** Metadados das contas do Antigravity para HABBLAUD_ACCOUNTS: `provider: 'antigravity'` e a pasta do HOST em `configDir`. */
+export function antigravityAccountsPayload(mounts: AntigravityAccountMount[]): AccountPayload[] {
+  return mounts.map(({ account: a, hostDir, mountDir }) => {
+    const p: AccountPayload = { id: a.id, provider: 'antigravity', configDir: hostDir, mountDir, short: a.short, name: a.name, color: a.color };
+    if (a.email) p.email = a.email;
     return p;
   });
 }
@@ -317,11 +326,11 @@ export function renderOverride(
   codex: AccountMount[] = [],
   remoteTlsDir?: string,
   extraPorts: string[] = [],
-  antigravity: AccountMount[] = [],
+  antigravity: AntigravityAccountMount[] = [],
 ): string {
   const env: Array<[string, string]> = [
     ['HABBLAUD_CLAUDE_DIRS', mounts.map((m) => m.mountDir).join(',')],
-    ['HABBLAUD_ACCOUNTS', JSON.stringify([...accountsPayload(mounts), ...codexAccountsPayload(codex)])],
+    ['HABBLAUD_ACCOUNTS', JSON.stringify([...accountsPayload(mounts), ...codexAccountsPayload(codex), ...antigravityAccountsPayload(antigravity)])],
   ];
   if (codex.length) env.push(['HABBLAUD_CODEX_DIRS', codex.map((m) => m.mountDir).join(',')]);
   if (antigravity.length) env.push(['HABBLAUD_ANTIGRAVITY_DIRS', antigravity.map((m) => m.mountDir).join(',')]);

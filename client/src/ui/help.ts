@@ -68,6 +68,16 @@ const CODEX_HELP: string[] = [
   tr('Meu dia: o Codex conta tokens, mas não grava custo.'),
 ];
 
+/** O Antigravity no escritório: ciclo de vida, salas, tokens e subagentes. */
+const ANTIGRAVITY_HELP: string[] = [
+  tr('O Antigravity se integra ao Habblaud via hooks de ciclo de vida (`npm run antigravity:install`) e leitura direta de `conversation_summaries.db` e `transcript.jsonl`.'),
+  tr('Cada projeto aberto no Antigravity vira uma sala no escritório; se o Claude Code ou o Codex estiverem no mesmo projeto, dividem a sala amigavelmente.'),
+  tr('Os personagens do Antigravity exibem a cor violeta e o crachá AGY na mesa e no topo da gaveta de detalhes.'),
+  tr('Subagentes invocados (ex.: pesquisas e tarefas paralelas) chegam como colegas na sala do agente pai e se despedem ao concluir.'),
+  tr('Uso e tokens: o Antigravity não possui janelas de 5 horas como o Claude Code; as estatísticas de tokens de entrada e saída aparecem no painel de cada agente e na linha do tempo.'),
+  tr('Mensagens e perguntas: as perguntas feitas pelo agente e mensagens enviadas pelo escritório são sincronizadas via hooks.'),
+];
+
 /** O fim da espera (o servidor marca com uma atividade ✅ ou ❌). */
 const SHELL_END_HELP: [string, string][] = [
   ['🎉', tr('Terminou bem: levanta, comemora com confete e uma estrela.')],
@@ -160,6 +170,7 @@ export class HelpDialog {
         ),
         this.usageSection(),
         this.codexSection(),
+        this.antigravitySection(),
       ),
     );
     // Clique no fundo (fora do conteúdo) fecha.
@@ -247,7 +258,7 @@ export class HelpDialog {
         'ul',
         { class: 'ui-help__list' },
         h('li', { text: tr('O chip colorido com a letra (C, D…) mostra de qual conta do Claude Code é cada agente: cada atalho de terminal usa uma pasta de configuração diferente.') }),
-        h('li', {}, accountSample('C', '#f08a3c'), tr(' Conta do Claude Code · '), accountSample('X', '#a77bf3', true), tr(' Conta do Codex (chip vazado, com o selo CODEX onde há espaço).')),
+        h('li', {}, accountSample('C', '#f08a3c'), tr(' Conta do Claude Code · '), accountSample('X', '#a77bf3', 'codex'), tr(' Conta do Codex (chip vazado, com o selo CODEX onde há espaço).'), accountSample('AC', '#a78bfa', 'antigravity'), tr(' Conta do Antigravity (crachá AGY).')),
         h('li', {
           text: tr('No topo, cada conta mostra o uso da sessão de 5 horas e da semana. O ↻ indica quando cada limite reinicia (contagem regressiva se faltar menos de um dia). Verde abaixo de 50%, âmbar até 80% e vermelho a partir daí.'),
         }),
@@ -272,15 +283,28 @@ export class HelpDialog {
     return el;
   }
 
+  /** O Antigravity no escritório (o "Como funciona" do cartão de uso de uma conta do Antigravity abre aqui). */
+  private antigravitySection(): HTMLElement {
+    const el = h(
+      'section',
+      { class: 'ui-help__usage', attrs: { 'aria-labelledby': 'ui-help-antigravity' } },
+      h('h3', { text: 'Antigravity', tabIndex: -1, attrs: { id: 'ui-help-antigravity' } }),
+      h('ul', { class: 'ui-help__list' }, ...ANTIGRAVITY_HELP.map((text) => h('li', {}, ...richText(text)))),
+    );
+    this.sections.set('antigravity', el);
+    return el;
+  }
+
   get isOpen(): boolean {
     return this.el.open;
   }
 }
 
 /** Um chip de conta de exemplo (legenda). */
-function accountSample(short: string, color: string, codex = false): HTMLElement {
+function accountSample(short: string, color: string, prov: 'claude' | 'codex' | 'antigravity' | boolean = 'claude'): HTMLElement {
+  const provider = typeof prov === 'boolean' ? (prov ? 'codex' : 'claude') : prov;
   const chip = createAccountChip('sm');
-  updateAccountChip(chip, { id: short, short, name: codex ? 'Codex' : tr('Conta {0}', [short]), color, configDir: '', sessions: 0, usageStatus: 'disabled', ...(codex ? { provider: 'codex' as const } : {}) });
+  updateAccountChip(chip, { id: short, short, name: provider === 'codex' ? 'Codex' : provider === 'antigravity' ? 'Antigravity' : tr('Conta {0}', [short]), color, configDir: '', sessions: 0, usageStatus: 'disabled', provider });
   chip.setAttribute('aria-hidden', 'true');
   return chip;
 }

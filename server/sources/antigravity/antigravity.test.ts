@@ -7,7 +7,8 @@ import { checkHooksJson, mergeHooksJson, removeHooksJson } from '../../../script
 import { AccountsService } from '../../accounts/service';
 import { NameStore } from '../../model/names';
 import { Office } from '../../model/office';
-import { detectAntigravityAccounts, discoverAntigravityDirs, planAntigravityMounts } from './accounts';
+import { detectAntigravityAccounts, detectAntigravityEmail, discoverAntigravityDirs, planAntigravityMounts } from './accounts';
+import { antigravityAccountsPayload } from '../../../scripts/docker-up';
 import { AntigravityLive } from './live';
 import { AntigravitySource } from './source';
 import { createAntigravityTerminalParser } from './terminal';
@@ -330,6 +331,52 @@ describe('antigravity source & sqlite integration', () => {
     }
     const mounts = planAntigravityMounts([agyDir], detectAntigravityAccounts([agyDir]));
     expect(mounts[0].binds).toEqual([{ source: agyDir, target: mounts[0].mountDir }]);
+  });
+
+  it('detects user email from cli.log and applies HABBLAUD_ACCOUNTS overrides', () => {
+    const root = mkdtempSync(join(tmpdir(), 'habblaud-agy-email-'));
+    tmpDirs.push(root);
+    const agyDir = join(root, 'antigravity-cli');
+    mkdirSync(agyDir, { recursive: true });
+    writeFileSync(join(agyDir, 'conversation_summaries.db'), '');
+    writeFileSync(
+      join(agyDir, 'cli.log'),
+      'I1102 10:56:01.254747 232 server_oauth.go:224] applyAuthResult: email=dev@example.com, authMethod=consumer\n',
+    );
+    expect(detectAntigravityEmail(agyDir)).toBe('dev@example.com');
+
+    const detected = detectAntigravityAccounts([agyDir]);
+    expect(detected[0]).toMatchObject({
+      id: 'antigravity-cli',
+      provider: 'antigravity',
+      email: 'dev@example.com',
+    });
+
+    const mounts = planAntigravityMounts([agyDir], detected);
+    const payload = antigravityAccountsPayload(mounts);
+    expect(payload).toEqual([
+      {
+        id: 'antigravity-cli',
+        provider: 'antigravity',
+        configDir: agyDir,
+        mountDir: '/antigravity/antigravity-cli',
+        short: 'A',
+        name: 'Antigravity CLI',
+        color: '#a78bfa',
+        email: 'dev@example.com',
+      },
+    ]);
+
+    // Simula a leitura dentro do Docker usando o HABBLAUD_ACCOUNTS passado pelo host:
+    const inDockerAccounts = detectAntigravityAccounts(['/antigravity/antigravity-cli'], {
+      env: { HABBLAUD_ACCOUNTS: JSON.stringify(payload) },
+    });
+    expect(inDockerAccounts[0]).toMatchObject({
+      id: 'antigravity-cli',
+      provider: 'antigravity',
+      configDir: agyDir,
+      email: 'dev@example.com',
+    });
   });
 });
 

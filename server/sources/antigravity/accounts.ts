@@ -5,10 +5,10 @@
 // - HABBLAUD_ANTIGRAVITY=0 desliga;
 // - HABBLAUD_ANTIGRAVITY_DIRS=/a,/b substitui tudo;
 // - senão, procura em ~/.gemini/antigravity-cli, ~/.gemini/antigravity e ~/.gemini/antigravity-ide.
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
-import type { DetectedAccount } from '../../accounts/detect';
+import { parseAccountOverrides, type DetectedAccount } from '../../accounts/detect';
 import { tr } from '../../../shared/i18n';
 
 /** Paleta de violeta/índigo espacial para diferenciar do âmbar do Claude e do verde/ciano do Codex. */
@@ -66,26 +66,79 @@ export function discoverAntigravityDirs(env: NodeJS.ProcessEnv = process.env, ho
 }
 
 export interface DetectAntigravityOptions {
+  env?: NodeJS.ProcessEnv;
   taken?: { shorts?: readonly string[]; colors?: readonly string[] };
 }
 
+/** Tenta extrair o e-mail do usuário autenticado no Antigravity através do cli.log ou log/cli-*.log. */
+export function detectAntigravityEmail(dir: string): string | undefined {
+  const candidates: string[] = [join(dir, 'cli.log')];
+  try {
+    const logDir = join(dir, 'log');
+    if (existsSync(logDir)) {
+      const entries = readdirSync(logDir)
+        .filter((f) => f.startsWith('cli-') && f.endsWith('.log'))
+        .sort()
+        .reverse();
+      for (const e of entries.slice(0, 3)) candidates.push(join(logDir, e));
+    }
+  } catch {
+    // ignora se log/ não existir
+  }
+
+  const EMAIL_RE = /\b(?:email=|authenticated successfully as )([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b/;
+  const buf = Buffer.alloc(64 * 1024);
+  for (const file of candidates) {
+    if (!existsSync(file)) continue;
+    try {
+      const fd = openSync(file, 'r');
+      try {
+        const bytes = readSync(fd, buf, 0, buf.length, 0);
+        const text = buf.toString('utf8', 0, bytes);
+        const match = EMAIL_RE.exec(text);
+        if (match) return match[1];
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      // continua para o próximo candidato
+    }
+  }
+  return undefined;
+}
+
 export function detectAntigravityAccounts(dirs: readonly string[], opts: DetectAntigravityOptions = {}): DetectedAccount[] {
+  const env = opts.env ?? process.env;
+  const overrides = parseAccountOverrides(env.HABBLAUD_ACCOUNTS).filter((o) => o.provider === 'antigravity');
   const usedIds = new Set<string>();
   const usedShorts = new Set((opts.taken?.shorts ?? []).map((s) => s.toUpperCase()));
   return dirs.map((dir, i): DetectedAccount => {
     const base = basename(dir);
-    const id = pickId(base, usedIds);
+    const resolvedDir = resolve(dir);
+    const ov =
+      overrides.find((o) => o.mountDir && resolve(o.mountDir) === resolvedDir) ??
+      overrides.find((o) => o.configDir && resolve(o.configDir) === resolvedDir) ??
+      overrides.find((o) => o.id === base || o.id === `antigravity:${base}`);
+
+    const id = ov?.id ?? pickId(base, usedIds);
     usedIds.add(id);
-    const short = pickShort(base, i, usedShorts);
+    const short = ov?.short ?? pickShort(base, i, usedShorts);
     usedShorts.add(short.toUpperCase());
-    const name = labelForBase(base);
-    return {
+    const name = ov?.name ?? labelForBase(base);
+    const color = ov?.color ?? ANTIGRAVITY_COLORS[i % ANTIGRAVITY_COLORS.length];
+    const configDir = ov?.configDir ?? dir;
+    const email = ov?.email ?? detectAntigravityEmail(dir);
+
+    const acc: DetectedAccount = {
       id,
+      provider: 'antigravity',
       short,
       name,
-      color: ANTIGRAVITY_COLORS[i % ANTIGRAVITY_COLORS.length],
-      configDir: dir,
+      color,
+      configDir,
     };
+    if (email) acc.email = email;
+    return acc;
   });
 }
 

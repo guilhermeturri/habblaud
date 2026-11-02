@@ -12,7 +12,7 @@ import type { UiContext } from './context';
 import { h, KeyedList, setAttr, setHidden, setStyleVar, setText, setTitle, setVariant } from './dom';
 import { FIVE_HOURS_MS, relativeTime, usageLevel, usageWindowView, WEEK_MS, type UsageWindowView } from './format';
 import { ICONS } from './icons';
-import { isCodex } from './provider';
+import { isAntigravity, isCodex, providerOf } from './provider';
 import { usageRowFits } from './usage-row';
 import { createAccountChip, createProviderTag, updateAccountChip, updateProviderTag } from './widgets';
 import { tr } from '../../../shared/i18n';
@@ -178,15 +178,28 @@ export function showsUsageAge(a: Pick<AccountInfo, 'usage' | 'usageStatus' | 'pr
 export function usageSubtitle(a: Pick<AccountInfo, 'email' | 'plan' | 'configDir' | 'provider'>): string {
   if (a.email) return a.email;
   if (isCodex(a)) return a.plan ? tr('plano {0}', [a.plan]) : 'Codex';
+  if (isAntigravity(a)) return tr('Antigravity');
   return a.configDir;
 }
 
 /** Mensagem no lugar das barras (estados sem números): [longa, curta]. */
-export function usageMessage(a: Pick<AccountInfo, 'usage' | 'usageStatus' | 'provider'>): [string, string] {
+export function usageMessage(a: Pick<AccountInfo, 'usage' | 'usageStatus' | 'provider'> & { sessions?: number }): [string, string] {
   const state = cardState(a);
   if (state === 'noquota') return [tr('sem cota'), tr('sem cota')];
   if (isCodex(a)) return [tr('sem dados ainda'), tr('sem dados')];
+  if (isAntigravity(a)) {
+    const s = a.sessions ?? 0;
+    return s > 0
+      ? [`${s} ${s === 1 ? tr('sessão ativa') : tr('sessões ativas')}`, `${s} ${tr('ativ.')}`]
+      : [tr('conectado via hooks'), tr('conectado')];
+  }
   return [tr('sem dados de uso'), tr('sem dados')];
+}
+
+/** Explicação do cartão de uma conta do Antigravity (dica); '' nas outras. */
+export function antigravityUsageNote(a: Pick<AccountInfo, 'provider'>): string {
+  if (!isAntigravity(a)) return '';
+  return tr('O Antigravity se integra ao Habblaud via hooks e leitura de sessões: o uso de tokens e chamadas a ferramentas aparece nos detalhes de cada agente.');
 }
 
 /** Explicação do cartão de uma conta do Codex (dica); '' nas outras. */
@@ -337,12 +350,13 @@ export class UsageCards {
     const r = this.refs.get(card)!;
     const now = this.ctx.now();
     const codex = isCodex(a);
+    const agy = isAntigravity(a);
     updateAccountChip(r.chip, a);
     setStyleVar(card, '--acc', a.color);
     setText(r.name, a.name);
-    updateProviderTag(r.prov, codex ? 'codex' : 'claude', a.name);
+    updateProviderTag(r.prov, providerOf(a), a.name);
     setText(r.email, usageSubtitle(a));
-    setAttr(card, 'aria-label', tr('{0}{1}: uso do plano', [a.name, codex ? ' (Codex)' : '']));
+    setAttr(card, 'aria-label', tr('{0}{1}: uso do plano', [a.name, codex ? ' (Codex)' : agy ? ' (Antigravity)' : '']));
 
     const usage = a.usage;
     const state = cardState(a);
@@ -375,7 +389,7 @@ export class UsageCards {
       );
     }
 
-    // Sem números: "sem dados de uso" + "Como ativar" (no Codex, "Como funciona": não há o que instalar). Sem cota:
+    // Sem números: "sem dados de uso" + "Como ativar" (no Codex e Antigravity, "Como funciona": não há o que instalar). Sem cota:
     // a mensagem, sem botão.
     const [msgLong, msgShort] = usageMessage(a);
     setText(r.msgLong, msgLong);
@@ -383,19 +397,28 @@ export class UsageCards {
     setHidden(r.msg, state !== 'empty' && state !== 'noquota');
     setHidden(r.how, state === 'noquota');
     r.msg.classList.toggle('is-noquota', state === 'noquota');
-    setTitle(r.msg, state === 'noquota' ? codexUsageNote(a, now) : '');
-    setText(r.howLong, codex ? tr('Como funciona') : tr('Como ativar'));
-    setText(r.howShort, codex ? tr('Saber') : tr('Ativar'));
-    r.how.dataset.help = codex ? 'codex' : 'usage';
-    setTitle(r.how, codex ? tr('Como o uso do Codex chega ao Habblaud (abre a ajuda em “Codex”)') : tr('Como mostrar o uso desta conta (abre a ajuda em “Contas e uso”)'));
+    setTitle(r.msg, state === 'noquota' ? codexUsageNote(a, now) : agy ? antigravityUsageNote(a) : '');
+    setText(r.howLong, codex || agy ? tr('Como funciona') : tr('Como ativar'));
+    setText(r.howShort, codex || agy ? tr('Saber') : tr('Ativar'));
+    r.how.dataset.help = codex ? 'codex' : agy ? 'antigravity' : 'usage';
+    setTitle(
+      r.how,
+      codex
+        ? tr('Como o uso do Codex chega ao Habblaud (abre a ajuda em “Codex”)')
+        : agy
+          ? tr('Como o Antigravity se integra ao Habblaud (abre a ajuda em “Antigravity”)')
+          : tr('Como mostrar o uso desta conta (abre a ajuda em “Contas e uso”)'),
+    );
     this.updateTip(r, a, state, five, week, now);
   }
 
   private updateTip(r: CardRefs, a: AccountInfo, state: CardState, five: UsageWindowView | null, week: UsageWindowView | null, now: number): void {
     const codex = isCodex(a);
-    setText(r.tipTitle, `${a.name}${codex && !/codex/i.test(a.name) ? ' · Codex' : ''}${a.plan ? tr(' · plano {0}', [a.plan]) : ''}`);
+    const agy = isAntigravity(a);
+    setText(r.tipTitle, `${a.name}${codex && !/codex/i.test(a.name) ? ' · Codex' : agy && !/antigravity/i.test(a.name) ? ' · Antigravity' : ''}${a.plan ? tr(' · plano {0}', [a.plan]) : ''}`);
     const rows: [string, string][] = [];
     if (codex) rows.push([tr('Ferramenta'), 'Codex']);
+    if (agy) rows.push([tr('Ferramenta'), 'Antigravity']);
     if (a.email) rows.push(['E-mail', a.email]);
     if (a.organization) rows.push([tr('Organização'), a.organization]);
     if (a.plan) rows.push([tr('Plano'), a.plan]);
@@ -418,9 +441,16 @@ export class UsageCards {
     }
     syncRows(r.tipRows, rows);
 
-    // Codex: a explicação dele, sem o passo a passo do Claude Code (não há o que instalar para o uso).
+    // Codex e Antigravity: explicações próprias, sem o passo a passo do Claude Code (não há mod a instalar).
     if (codex) {
       const note = codexUsageNote(a, now);
+      setText(r.tipNote, note);
+      setHidden(r.tipNote, !note);
+      setHidden(r.tipSetup, true);
+      return;
+    }
+    if (agy) {
+      const note = antigravityUsageNote(a);
       setText(r.tipNote, note);
       setHidden(r.tipNote, !note);
       setHidden(r.tipSetup, true);
