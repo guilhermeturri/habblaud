@@ -1,0 +1,168 @@
+// Contas do Google Antigravity: cada superfície (~/.gemini/antigravity-cli, ~/.gemini/antigravity, ~/.gemini/antigravity-ide)
+// vira um DetectedAccount registrado via AccountsService.setProviderAccounts('antigravity', ...).
+//
+// Descoberta:
+// - HABBLAUD_ANTIGRAVITY=0 desliga;
+// - HABBLAUD_ANTIGRAVITY_DIRS=/a,/b substitui tudo;
+// - senão, procura em ~/.gemini/antigravity-cli, ~/.gemini/antigravity e ~/.gemini/antigravity-ide.
+import { existsSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
+import type { DetectedAccount } from '../../accounts/detect';
+import { tr } from '../../../shared/i18n';
+
+/** Paleta de violeta/índigo espacial para diferenciar do âmbar do Claude e do verde/ciano do Codex. */
+const ANTIGRAVITY_COLORS = ['#a78bfa', '#818cf8', '#c084fc', '#60a5fa'];
+
+const ANTIGRAVITY_MARKERS = ['conversation_summaries.db', 'brain', 'presence', 'annotations', 'conversations', 'history.jsonl'];
+
+export interface DiscoverAntigravityOptions {
+  env?: NodeJS.ProcessEnv;
+  home?: string;
+}
+
+export function isAntigravityHome(dir: string): boolean {
+  try {
+    if (!statSync(dir).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  return ANTIGRAVITY_MARKERS.some((m) => existsSync(join(dir, m)));
+}
+
+export function discoverAntigravityDirs(env: NodeJS.ProcessEnv = process.env, home: string = env.HOME || homedir()): string[] {
+  const flag = env.HABBLAUD_ANTIGRAVITY?.trim().toLowerCase();
+  if (flag === '0' || flag === 'false' || flag === 'no' || flag === 'off') return [];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (raw: string, checkMarker: boolean) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+    const p = resolve(trimmed.startsWith('~/') ? join(home, trimmed.slice(2)) : trimmed);
+    if (seen.has(p)) return;
+    if (checkMarker ? !isAntigravityHome(p) : !isDir(p)) return;
+    seen.add(p);
+    out.push(p);
+  };
+
+  if (env.HABBLAUD_ANTIGRAVITY_DIRS?.trim()) {
+    for (const part of env.HABBLAUD_ANTIGRAVITY_DIRS.split(',')) add(part, false);
+    return out;
+  }
+
+  const geminiDir = join(home, '.gemini');
+  add(join(geminiDir, 'antigravity-cli'), true);
+  add(join(geminiDir, 'antigravity'), true);
+  add(join(geminiDir, 'antigravity-ide'), true);
+  try {
+    for (const entry of readdirSync(geminiDir).sort()) {
+      if (entry.startsWith('antigravity')) add(join(geminiDir, entry), true);
+    }
+  } catch {
+    // ~/.gemini pode não existir.
+  }
+  return out;
+}
+
+export interface DetectAntigravityOptions {
+  taken?: { shorts?: readonly string[]; colors?: readonly string[] };
+}
+
+export function detectAntigravityAccounts(dirs: readonly string[], opts: DetectAntigravityOptions = {}): DetectedAccount[] {
+  const usedIds = new Set<string>();
+  const usedShorts = new Set((opts.taken?.shorts ?? []).map((s) => s.toUpperCase()));
+  return dirs.map((dir, i): DetectedAccount => {
+    const base = basename(dir);
+    const id = pickId(base, usedIds);
+    usedIds.add(id);
+    const short = pickShort(base, i, usedShorts);
+    usedShorts.add(short.toUpperCase());
+    const name = labelForBase(base);
+    return {
+      id,
+      short,
+      name,
+      color: ANTIGRAVITY_COLORS[i % ANTIGRAVITY_COLORS.length],
+      configDir: dir,
+    };
+  });
+}
+
+function labelForBase(base: string): string {
+  if (base === 'antigravity-cli') return 'Antigravity CLI';
+  if (base === 'antigravity') return 'Antigravity';
+  if (base === 'antigravity-ide') return 'Antigravity IDE';
+  const suffix = base.replace(/^antigravity[-_]?/i, '').trim();
+  return suffix ? tr('Antigravity ({0})', [suffix]) : 'Antigravity';
+}
+
+function pickId(base: string, taken: ReadonlySet<string>): string {
+  const first = base.startsWith('antigravity') ? base : `antigravity:${base}`;
+  if (!taken.has(first)) return first;
+  for (let n = 2; ; n++) {
+    const cand = `antigravity:${base}#${n}`;
+    if (!taken.has(cand)) return cand;
+  }
+}
+
+function pickShort(base: string, index: number, taken: ReadonlySet<string>): string {
+  const candidates: string[] = [];
+  if (base === 'antigravity-cli') candidates.push('A', 'AC');
+  else if (base === 'antigravity') candidates.push('G', 'AG');
+  else if (base === 'antigravity-ide') candidates.push('AI', 'A');
+  const suffix = base.replace(/^antigravity[-_]?/i, '');
+  if (suffix) candidates.push(`A${suffix[0].toUpperCase()}`);
+  candidates.push('A', 'G', `A${index + 1}`);
+  for (const c of candidates) {
+    if (!taken.has(c.toUpperCase())) return c;
+  }
+  for (let n = 2; ; n++) {
+    const c = `A${n}`;
+    if (!taken.has(c.toUpperCase())) return c;
+  }
+}
+
+function isDir(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+export interface AntigravityBindMount {
+  source: string;
+  target: string;
+}
+
+export interface AntigravityAccountMount {
+  account: DetectedAccount;
+  hostDir: string;
+  mountDir: string;
+  binds: AntigravityBindMount[];
+}
+
+export const ANTIGRAVITY_CONTAINER_ROOT = '/antigravity';
+/** O que o Habblaud lê da pasta (o resto, como conversations/*.pb, nunca é aberto). */
+export const ANTIGRAVITY_MOUNTED_ITEMS = ['conversation_summaries.db', 'brain', 'annotations', 'presence', 'history.jsonl'] as const;
+
+/**
+ * Monta a pasta da conta INTEIRA (o docker-up sempre monta `read_only`), e não arquivo por arquivo: a base SQLite fica
+ * em modo WAL (`-wal`/`-shm` que aparecem e somem), um bind de arquivo que ainda não existe vira diretório no host e um
+ * bind de arquivo trocado por rename atômico fica preso ao inode antigo.
+ */
+export function planAntigravityMounts(
+  dirs: readonly string[],
+  accounts: readonly DetectedAccount[],
+): AntigravityAccountMount[] {
+  const out: AntigravityAccountMount[] = [];
+  dirs.forEach((hostDir, i) => {
+    const account = accounts[i];
+    if (!account) return;
+    if (!ANTIGRAVITY_MOUNTED_ITEMS.some((sub) => existsSync(join(hostDir, sub)))) return;
+    const mountDir = `${ANTIGRAVITY_CONTAINER_ROOT}/${account.id.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    out.push({ account, hostDir, mountDir, binds: [{ source: hostDir, target: mountDir }] });
+  });
+  return out;
+}
